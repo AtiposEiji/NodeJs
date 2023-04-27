@@ -1,6 +1,6 @@
 const Tour = require("../../models/tour/tourModel");
-const APIFeatures = require("../../utils/apiFeatures");
 const catchAsync = require("../../utils/catchAsync");
+const factory = require("../handler/handlerFactory");
 const appError = require("../../utils/appError");
 
 exports.aliasTopTours = (req, res, next) => {
@@ -10,78 +10,89 @@ exports.aliasTopTours = (req, res, next) => {
     next();
 }
 
-exports.getAllTours = catchAsync(async (req, res, next) => {
+exports.getAllTours = factory.getAll(Tour);
 
-    // EXECUTE QUERY
-    const features = new APIFeatures(Tour.find(), req.query).filter().sort().limitFIleds().pagination();
-    const trousList = await features.query;
+// catchAsync(async (req, res, next) => {
 
-    res.status(200).json({
-        status: "Success",
-        results: trousList.length,
-        data: {
-            trousList
-        }
-    });
-})
+//     // EXECUTE QUERY
+//     const features = new APIFeatures(Tour.find(), req.query).filter().sort().limitFIleds().pagination();
+//     const trousList = await features.query;
 
-exports.getTour = catchAsync(async (req, res, next) => {
-    const tour = await Tour.findById(req.params.id); //Tour.FindOne({ _id: req.params.id }) is the same thing
+//     res.status(200).json({
+//         status: "Success",
+//         results: trousList.length,
+//         data: {
+//             trousList
+//         }
+//     });
+// })
 
-    if (!tour) {
-        return next(new appError("No tour found with that ID", 404))
-    }
+exports.getTour = factory.getOne(Tour, { path: "reviews" });
 
-    res.status(200).json({
-        status: "success",
-        requestedAt: req.requestTime,
-        data: {
-            tour
-        }
-    });
-})
+// catchAsync(async (req, res, next) => {
+//     //Tour.FindOne({ _id: req.params.id }) is the same thing of doing this: await Tour.findById(req.params.id)
+//     const tour = await Tour.findById(req.params.id).populate("reviews")
 
-exports.postTour = catchAsync(async (req, res, next) => {
-    const newTour = await Tour.create(req.body);
-    res.status(201).json({
-        status: "success",
-        data: {
-            tour: newTour
-        }
-    });
-})
+//     if (!tour) {
+//         return next(new appError("No tour found with that ID", 404))
+//     }
 
-exports.patchTour = catchAsync(async (req, res, next) => {
+//     res.status(200).json({
+//         status: "success",
+//         requestedAt: req.requestTime,
+//         data: {
+//             tour
+//         }
+//     });
+// })
 
-    const tour = await Tour.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
-        returnValidators: true
-    })
+exports.postTour = factory.postOne(Tour);
 
-    if (!tour) {
-        return next(new appError("No tour found with that ID", 404))
-    }
+// catchAsync(async (req, res, next) => {
+//     const newTour = await Tour.create(req.body);
+//     res.status(201).json({
+//         status: "success",
+//         data: {
+//             tour: newTour
+//         }
+//     });
+// })
 
-    res.status(200).json({
-        status: 'success',
-        data: {
-            tour
-        }
-    })
-})
+exports.patchTour = factory.updateOne(Tour);
 
-exports.deleteTour = catchAsync(async (req, res, next) => {
-    const tour = await Tour.findByIdAndDelete(req.params.id);
+// catchAsync(async (req, res, next) => {
 
-    if (!tour) {
-        return next(new appError("No tour found with that ID", 404))
-    }
+//     const tour = await Tour.findByIdAndUpdate(req.params.id, req.body, {
+//         new: true,
+//         returnValidators: true
+//     })
 
-    return res.status(204).json({
-        status: 'success',
-        data: null
-    })
-})
+//     if (!tour) {
+//         return next(new appError("No tour found with that ID", 404))
+//     }
+
+//     res.status(200).json({
+//         status: 'success',
+//         data: {
+//             tour
+//         }
+//     })
+// })
+
+exports.deleteTour = factory.deleteOne(Tour);
+
+// catchAsync(async (req, res, next) => {
+//     const tour = await Tour.findByIdAndDelete(req.params.id);
+
+//     if (!tour) {
+//         return next(new appError("No tour found with that ID", 404))
+//     }
+
+//     return res.status(204).json({
+//         status: 'success',
+//         data: null
+//     })
+// })
 
 exports.getTourStats = catchAsync(async (req, res, next) => {
 
@@ -168,6 +179,68 @@ exports.getMonthlyPlan = catchAsync(async (req, res, next) => {
         status: "success",
         data: {
             plan
+        }
+    })
+})
+
+exports.getToursWithin = catchAsync(async (req, res, next) => {
+    // /tours-within/:distance/center/:latlng/unit/:unit
+    const { distance, latlng, unit } = req.params;
+    const [lat, lng] = latlng.split(",");
+    // 3963.2 Earth in mi or 6378.1 Earth in km
+    const radius = unit === "mi" ? distance / 3963.2 : distance / 6378.1;
+
+    if (!lat || !lng) {
+        next(new appError("Please provide a lat and lng", 400))
+    }
+
+    const tours = await Tour.find({
+        startLocation: { $geoWithin: { $centerSphere: [[lng, lat], radius] } }
+    })
+
+    res.status(200).json({
+        status: "success",
+        results: tours.length,
+        data: {
+            data: tours
+        }
+    })
+})
+
+exports.getDistances = catchAsync(async (req, res, next) => {
+    const { latlng, unit } = req.params;
+    const [lat, lng] = latlng.split(",");
+
+    const multiplier = unit === "mi" ? 0.000621371 : 0.001;
+
+    if (!lat || !lng) {
+        next(new appError("Please provide a lat and lng", 400))
+    }
+
+    const distances = await Tour.aggregate([
+        {
+            //Need to be first always
+            $geoNear: {
+                near: {
+                    type: "Point",
+                    coordinates: [parseInt(lng), parseInt(lat)]
+                },
+                distanceField: "distance",
+                distanceMultiplier: multiplier
+            }
+        },
+        {
+            $project: {
+                distance: 1,
+                name: 1
+            }
+        }
+    ]);
+
+    res.status(200).json({
+        status: "success",
+        data: {
+            data: distances
         }
     })
 })
